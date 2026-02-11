@@ -1,14 +1,14 @@
 package com.ju1.fishDetector
 
+import io.papermc.paper.command.brigadier.Commands
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import net.kyori.adventure.title.Title
 import org.bukkit.Bukkit
 import org.bukkit.Sound
-import org.bukkit.command.Command
 import org.bukkit.command.CommandSender
-import org.bukkit.configuration.file.FileConfiguration
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
@@ -29,7 +29,6 @@ class FishDetector : JavaPlugin(), Listener {
     private var cleanupTimeThresholdMillis: Long = 0
     private var rotationSensitivity: Double = 0.0
 
-    // Map: UUID -> Timestamp of last ROTATION
     private val fishingPlayers: MutableMap<UUID, Long> = HashMap()
     private val warnedPlayers: MutableSet<UUID> = HashSet()
 
@@ -38,6 +37,7 @@ class FishDetector : JavaPlugin(), Listener {
         loadConfigValues()
 
         server.pluginManager.registerEvents(this, this)
+        registerCommands()
 
         val interval = config.getInt("check-interval-ticks", 100).toLong()
         server.scheduler.runTaskTimer(this, Runnable { checkAfkFishers() }, interval, interval)
@@ -50,6 +50,67 @@ class FishDetector : JavaPlugin(), Listener {
         warnedPlayers.clear()
     }
 
+    private fun registerCommands() {
+        val manager = this.lifecycleManager
+        manager.registerEventHandler(LifecycleEvents.COMMANDS) { event ->
+            val commands = event.registrar()
+
+            val fishDetectorCommand = Commands.literal("fishdetector")
+                .requires { source -> source.sender.hasPermission("fishdetector.admin") }
+                .then(Commands.literal("reload")
+                    .executes { ctx ->
+                        loadConfigValues()
+                        ctx.source.sender.sendMessage(Component.text("FishDetector config reloaded successfully.", NamedTextColor.GREEN))
+                        1
+                    }
+                )
+                .then(Commands.literal("toggle")
+                    .executes { ctx -> // Toggle
+                        handleToggle(ctx.source.sender, null)
+                        1
+                    }
+                    .then(Commands.literal("on")
+                        .executes { ctx ->
+                            handleToggle(ctx.source.sender, true)
+                            1
+                        }
+                    )
+                    .then(Commands.literal("off")
+                        .executes { ctx ->
+                            handleToggle(ctx.source.sender, false)
+                            1
+                        }
+                    )
+                )
+                .build()
+
+            commands.register(fishDetectorCommand, "Main command for FishDetector")
+        }
+    }
+
+    private fun handleToggle(sender: CommandSender, explicitState: Boolean?) {
+        val newState = explicitState ?: !isEnabled
+
+        if (isEnabled != newState) {
+            isEnabled = newState
+
+            reloadConfig()
+            config.set("enabled", isEnabled)
+            saveConfig()
+
+            val status = if (isEnabled) Component.text("ON", NamedTextColor.GREEN) else Component.text("OFF", NamedTextColor.RED)
+            sender.sendMessage(Component.text("FishDetector global toggle: ", NamedTextColor.GOLD).append(status))
+
+            if (!isEnabled) {
+                fishingPlayers.clear()
+                warnedPlayers.clear()
+            }
+        } else {
+            sender.sendMessage(Component.text("FishDetector is already ", NamedTextColor.GOLD)
+                .append(if (isEnabled) Component.text("ON", NamedTextColor.GREEN) else Component.text("OFF", NamedTextColor.RED)))
+        }
+    }
+
     private fun loadConfigValues() {
         reloadConfig()
         val config = config
@@ -58,45 +119,6 @@ class FishDetector : JavaPlugin(), Listener {
         warningTimeThresholdMillis = config.getLong("warning-time-seconds") * 1000L
         cleanupTimeThresholdMillis = config.getLong("cleanup-timeout-seconds", 600) * 1000L
         rotationSensitivity = config.getDouble("rotation-threshold", 1.0)
-    }
-
-    override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
-        if (command.name.equals("fishdetector", ignoreCase = true)) {
-            if (!sender.hasPermission("fishdetector.admin")) {
-                sender.sendMessage(Component.text("No permission.", NamedTextColor.RED))
-                return true
-            }
-
-            if (args.isEmpty()) {
-                sender.sendMessage(Component.text("Usage: /fishdetector <toggle|reload>", NamedTextColor.YELLOW))
-                return true
-            }
-
-            if (args[0].equals("reload", ignoreCase = true)) {
-                loadConfigValues()
-                sender.sendMessage(Component.text("FishDetector config reloaded successfully.", NamedTextColor.GREEN))
-                return true
-            }
-
-            if (args[0].equals("toggle", ignoreCase = true)) {
-                isEnabled = !isEnabled
-                config.set("enabled", isEnabled)
-                saveConfig()
-
-                val status = if (isEnabled) Component.text("ON", NamedTextColor.GREEN) else Component.text("OFF", NamedTextColor.RED)
-                sender.sendMessage(Component.text("FishDetector global toggle: ", NamedTextColor.GOLD).append(status))
-
-                if (!isEnabled) {
-                    fishingPlayers.clear()
-                    warnedPlayers.clear()
-                }
-                return true
-            }
-
-            sender.sendMessage(Component.text("Usage: /fishdetector <toggle|reload>", NamedTextColor.YELLOW))
-            return true
-        }
-        return false
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -135,7 +157,6 @@ class FishDetector : JavaPlugin(), Listener {
         if (!isEnabled || fishingPlayers.isEmpty()) return
 
         val now = System.currentTimeMillis()
-        val config = config
         val iterator = fishingPlayers.keys.iterator()
 
         while (iterator.hasNext()) {
@@ -159,22 +180,20 @@ class FishDetector : JavaPlugin(), Listener {
                 continue
             }
 
-            // Punishment Check
             if (timeInactive > afkTimeThresholdMillis) {
-                handleAfkPlayer(player, uuid, config)
+                handleAfkPlayer(player, uuid)
                 iterator.remove()
                 continue
             }
 
-            // Warning Check
             if (timeInactive > warningTimeThresholdMillis && !warnedPlayers.contains(uuid)) {
-                sendWarning(player, config)
+                sendWarning(player)
                 warnedPlayers.add(uuid)
             }
         }
     }
 
-    private fun sendWarning(player: Player, config: FileConfiguration) {
+    private fun sendWarning(player: Player) {
         val msgRaw = config.getString("warning-message", "&c&lAFK DETECTED!")
         val mainMsg = LegacyComponentSerializer.legacyAmpersand().deserialize(msgRaw!!)
 
@@ -187,7 +206,7 @@ class FishDetector : JavaPlugin(), Listener {
         player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f)
     }
 
-    private fun handleAfkPlayer(player: Player, uuid: UUID, config: FileConfiguration) {
+    private fun handleAfkPlayer(player: Player, uuid: UUID) {
         warnedPlayers.remove(uuid)
 
         if (config.getBoolean("actions.cancel-fishing")) {

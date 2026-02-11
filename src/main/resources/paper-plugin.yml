@@ -2,3 +2,7 @@ name: FishDetector
 version: '1.0-SNAPSHOT'
 main: com.ju1.fishDetector.FishDetector
 api-version: '1.21'
+permissions:
+  fishdetector.admin:
+    description: Allows reloading and toggling the plugin
+    default: op
