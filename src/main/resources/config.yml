@@ -1,0 +1,24 @@
+enabled: true
+
+# Time in seconds of no movement before punishment.
+afk-time-seconds: 300
+
+# Time in seconds to warn the player before punishment.
+warning-time-seconds: 240
+
+# Time in seconds to stop tracking a player after they reel in.
+# If they don't cast again within this time, we clear their data.
+cleanup-timeout-seconds: 600
+
+# Degrees for mouse movement
+rotation-threshold: 0.1
+
+check-interval-ticks: 100
+
+warning-message: "&c&lAre you afk? &eMove your mouse!"
+
+actions:
+  cancel-fishing: true
+  kick-player: false
+  kick-message: "&cNo AFK Fishing allowed!"
+  broadcast-alert: "&e%player% stopped fishing due to inactivity."
