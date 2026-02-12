@@ -1,11 +1,16 @@
 package com.ju1.fishDetector
 
+import com.mojang.brigadier.arguments.BoolArgumentType
 import io.papermc.paper.command.brigadier.Commands
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents
+import java.time.Duration
+import java.util.UUID
+import kotlin.math.abs
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import net.kyori.adventure.title.Title
+import com.ju1.fishDetector.LatencyMonitor
 import org.bukkit.Bukkit
 import org.bukkit.Sound
 import org.bukkit.command.CommandSender
@@ -14,14 +19,11 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerFishEvent
-import org.bukkit.event.player.PlayerMoveEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.plugin.java.JavaPlugin
-import java.time.Duration
-import java.util.UUID
-import kotlin.math.abs
 
 class FishDetector : JavaPlugin(), Listener {
+    private class FisherSession(var lastActiveTime: Long, var lastYaw: Float, var lastPitch: Float)
 
     private var isEnabled: Boolean = false
     private var afkTimeThresholdMillis: Long = 0
@@ -29,24 +31,37 @@ class FishDetector : JavaPlugin(), Listener {
     private var cleanupTimeThresholdMillis: Long = 0
     private var rotationSensitivity: Double = 0.0
 
-    private val fishingPlayers: MutableMap<UUID, Long> = HashMap()
-    private val warnedPlayers: MutableSet<UUID> = HashSet()
+    private val legacySerializer = LegacyComponentSerializer.legacyAmpersand()
+
+    private val fishingSessions = mutableMapOf<UUID, FisherSession>()
+    private val warnedPlayers = mutableSetOf<UUID>()
+    private val pendingKicks = ArrayList<Pair<Player, UUID>>()
 
     override fun onEnable() {
         saveDefaultConfig()
         loadConfigValues()
 
         server.pluginManager.registerEvents(this, this)
+        LatencyMonitor.init(this)
+
         registerCommands()
+
+        if (isEnabled) {
+            Bukkit.getOnlinePlayers().forEach { player ->
+                if (player.fishHook != null) {
+                    trackPlayer(player)
+                }
+            }
+        }
 
         val interval = config.getInt("check-interval-ticks", 100).toLong()
         server.scheduler.runTaskTimer(this, Runnable { checkAfkFishers() }, interval, interval)
 
-        logger.info("FishDetector enabled (Passive Rotation Detection)")
+        logger.info("FishDetector enabled.")
     }
 
     override fun onDisable() {
-        fishingPlayers.clear()
+        fishingSessions.clear()
         warnedPlayers.clear()
     }
 
@@ -55,65 +70,82 @@ class FishDetector : JavaPlugin(), Listener {
         manager.registerEventHandler(LifecycleEvents.COMMANDS) { event ->
             val commands = event.registrar()
 
-            val fishDetectorCommand = Commands.literal("fishdetector")
-                .requires { source -> source.sender.hasPermission("fishdetector.admin") }
-                .then(Commands.literal("reload")
-                    .executes { ctx ->
-                        loadConfigValues()
-                        ctx.source.sender.sendMessage(Component.text("FishDetector config reloaded successfully.", NamedTextColor.GREEN))
-                        1
-                    }
-                )
-                .then(Commands.literal("toggle")
-                    .executes { ctx -> // Toggle
-                        handleToggle(ctx.source.sender, null)
-                        1
-                    }
-                    .then(Commands.literal("on")
-                        .executes { ctx ->
-                            handleToggle(ctx.source.sender, true)
-                            1
-                        }
-                    )
-                    .then(Commands.literal("off")
-                        .executes { ctx ->
-                            handleToggle(ctx.source.sender, false)
-                            1
-                        }
-                    )
-                )
-                .build()
+            val reloadNode =
+                    Commands.literal("reload")
+                            .executes { ctx ->
+                                loadConfigValues()
+                                ctx.source.sender.sendMessage(
+                                        Component.text(
+                                                "FishDetector config reloaded.",
+                                                NamedTextColor.GREEN
+                                        )
+                                )
+                                1
+                            }
+                            .build()
+            val toggleNode =
+                    Commands.literal("toggle")
+                            .executes { ctx ->
+                                handleToggle(ctx.source.sender, null)
+                                1
+                            }
+                            .then(
+                                    Commands.argument("state", BoolArgumentType.bool()).executes {
+                                            ctx ->
+                                        val state = BoolArgumentType.getBool(ctx, "state")
+                                        handleToggle(ctx.source.sender, state)
+                                        1
+                                    }
+                            )
 
-            commands.register(fishDetectorCommand, "Main command for FishDetector")
+            val fishDetectorCommand =
+                    Commands.literal("fishdetector")
+                            .requires { it.sender.hasPermission("fishdetector.admin") }
+                            .then(reloadNode)
+                            .then(toggleNode)
+                            .build()
+
+            commands.register(fishDetectorCommand, "Main command for FishDetector", listOf("fd"))
         }
     }
 
     private fun handleToggle(sender: CommandSender, explicitState: Boolean?) {
         val newState = explicitState ?: !isEnabled
-
         if (isEnabled != newState) {
             isEnabled = newState
-
-            reloadConfig()
             config.set("enabled", isEnabled)
             saveConfig()
 
-            val status = if (isEnabled) Component.text("ON", NamedTextColor.GREEN) else Component.text("OFF", NamedTextColor.RED)
-            sender.sendMessage(Component.text("FishDetector global toggle: ", NamedTextColor.GOLD).append(status))
+            val color = if (isEnabled) NamedTextColor.GREEN else NamedTextColor.RED
+            val statusText = if (isEnabled) "ON" else "OFF"
+
+            sender.sendMessage(
+                    Component.text("FishDetector global toggle: ", NamedTextColor.GOLD)
+                            .append(Component.text(statusText, color))
+            )
 
             if (!isEnabled) {
-                fishingPlayers.clear()
+                fishingSessions.clear()
                 warnedPlayers.clear()
+            } else {
+                Bukkit.getOnlinePlayers().forEach { if (it.fishHook != null) trackPlayer(it) }
             }
         } else {
-            sender.sendMessage(Component.text("FishDetector is already ", NamedTextColor.GOLD)
-                .append(if (isEnabled) Component.text("ON", NamedTextColor.GREEN) else Component.text("OFF", NamedTextColor.RED)))
+            sender.sendMessage(
+                    Component.text("FishDetector is already ", NamedTextColor.GOLD)
+                            .append(
+                                    Component.text(
+                                            if (isEnabled) "ON" else "OFF",
+                                            if (isEnabled) NamedTextColor.GREEN
+                                            else NamedTextColor.RED
+                                    )
+                            )
+            )
         }
     }
 
     private fun loadConfigValues() {
         reloadConfig()
-        val config = config
         isEnabled = config.getBoolean("enabled")
         afkTimeThresholdMillis = config.getLong("afk-time-seconds") * 1000L
         warningTimeThresholdMillis = config.getLong("warning-time-seconds") * 1000L
@@ -121,56 +153,63 @@ class FishDetector : JavaPlugin(), Listener {
         rotationSensitivity = config.getDouble("rotation-threshold", 1.0)
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onFish(event: PlayerFishEvent) {
-        if (!isEnabled) return
-        if (event.state == PlayerFishEvent.State.FISHING) {
-            fishingPlayers.putIfAbsent(event.player.uniqueId, System.currentTimeMillis())
+    private fun trackPlayer(player: Player) {
+        fishingSessions.getOrPut(player.uniqueId) {
+            FisherSession(System.currentTimeMillis(), player.yaw, player.pitch)
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onMove(event: PlayerMoveEvent) {
-        if (!isEnabled || fishingPlayers.isEmpty()) return
-
-        val uuid = event.player.uniqueId
-        if (!fishingPlayers.containsKey(uuid)) return
-
-        if (event.from.yaw == event.to.yaw && event.from.pitch == event.to.pitch) return
-
-        val diffYaw = abs(event.from.yaw - event.to.yaw)
-        val diffPitch = abs(event.from.pitch - event.to.pitch)
-
-        if ((diffYaw + diffPitch) > rotationSensitivity) {
-            fishingPlayers[uuid] = System.currentTimeMillis()
-            warnedPlayers.remove(uuid)
+    fun onFish(event: PlayerFishEvent) {
+        if (!isEnabled) return
+        if (event.state == PlayerFishEvent.State.CAUGHT_FISH) {
+            trackPlayer(event.player)
         }
     }
 
     @EventHandler
     fun onQuit(event: PlayerQuitEvent) {
-        fishingPlayers.remove(event.player.uniqueId)
+        fishingSessions.remove(event.player.uniqueId)
         warnedPlayers.remove(event.player.uniqueId)
     }
 
     private fun checkAfkFishers() {
-        if (!isEnabled || fishingPlayers.isEmpty()) return
+        if (!isEnabled || fishingSessions.isEmpty()) return
+        pendingKicks.clear()
 
         val now = System.currentTimeMillis()
-        val iterator = fishingPlayers.keys.iterator()
+        val iterator = fishingSessions.iterator()
 
         while (iterator.hasNext()) {
-            val uuid = iterator.next()
+            val entry = iterator.next()
+            val uuid = entry.key
+            val session = entry.value
             val player = Bukkit.getPlayer(uuid)
 
-            if (player == null) {
+            // Cleanup invalid players
+            if (player == null || !player.isOnline) {
                 iterator.remove()
                 warnedPlayers.remove(uuid)
                 continue
             }
 
-            val lastRotation = fishingPlayers[uuid] ?: continue
-            val timeInactive = now - lastRotation
+            // Check for movement
+            val currentYaw = player.yaw
+            val currentPitch = player.pitch
+
+            val diffYaw = abs(currentYaw - session.lastYaw)
+            val diffPitch = abs(currentPitch - session.lastPitch)
+
+            if ((diffYaw + diffPitch) > rotationSensitivity) {
+                session.lastActiveTime = now
+                session.lastYaw = currentYaw
+                session.lastPitch = currentPitch
+                warnedPlayers.remove(uuid)
+                continue
+            }
+
+            // Haven't moved, still fishing?
+            val timeInactive = now - session.lastActiveTime
 
             if (player.fishHook == null) {
                 if (timeInactive > cleanupTimeThresholdMillis) {
@@ -180,8 +219,9 @@ class FishDetector : JavaPlugin(), Listener {
                 continue
             }
 
+            // Handle Actions
             if (timeInactive > afkTimeThresholdMillis) {
-                handleAfkPlayer(player, uuid)
+                pendingKicks.add(player to uuid)
                 iterator.remove()
                 continue
             }
@@ -191,17 +231,23 @@ class FishDetector : JavaPlugin(), Listener {
                 warnedPlayers.add(uuid)
             }
         }
+        pendingKicks.forEach { handleAfkPlayer(it.first, it.second) }
     }
 
     private fun sendWarning(player: Player) {
         val msgRaw = config.getString("warning-message", "&c&lAFK DETECTED!")
-        val mainMsg = LegacyComponentSerializer.legacyAmpersand().deserialize(msgRaw!!)
+        val mainMsg = legacySerializer.deserialize(msgRaw!!)
 
-        val title = Title.title(
-            mainMsg,
-            Component.text("You will be kicked shortly.", NamedTextColor.YELLOW),
-            Title.Times.times(Duration.ofMillis(500), Duration.ofMillis(3000), Duration.ofMillis(1000))
-        )
+        val title =
+                Title.title(
+                        mainMsg,
+                        Component.text("You will be kicked shortly.", NamedTextColor.YELLOW),
+                        Title.Times.times(
+                                Duration.ofMillis(500),
+                                Duration.ofMillis(3000),
+                                Duration.ofMillis(1000)
+                        )
+                )
         player.showTitle(title)
         player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f)
     }
@@ -211,18 +257,20 @@ class FishDetector : JavaPlugin(), Listener {
 
         if (config.getBoolean("actions.cancel-fishing")) {
             player.fishHook?.remove()
-            player.sendMessage(Component.text("You stopped fishing due to inactivity.", NamedTextColor.RED))
+            player.sendMessage(
+                    Component.text("You stopped fishing due to inactivity.", NamedTextColor.RED)
+            )
         }
 
         val alertRaw = config.getString("actions.broadcast-alert")
         if (!alertRaw.isNullOrEmpty()) {
-            val alertMsg = LegacyComponentSerializer.legacyAmpersand().deserialize(alertRaw.replace("%player%", player.name))
+            val alertMsg = legacySerializer.deserialize(alertRaw.replace("%player%", player.name))
             Bukkit.broadcast(alertMsg)
         }
 
         if (config.getBoolean("actions.kick-player")) {
             val reasonRaw = config.getString("actions.kick-message", "AFK Fishing")
-            player.kick(LegacyComponentSerializer.legacyAmpersand().deserialize(reasonRaw!!))
+            player.kick(legacySerializer.deserialize(reasonRaw!!))
         }
     }
 }

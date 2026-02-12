@@ -7,7 +7,6 @@ afk-time-seconds: 600
 warning-time-seconds: 540
 
 # Time in seconds to stop tracking a player after they reel in.
-# If they don't cast again within this time, we clear their data.
 cleanup-timeout-seconds: 1200
 
 # Degrees for mouse movement

@@ -16,25 +16,31 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+    compileOnly("org.apache.logging.log4j:log4j-core:2.25.3")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
 }
 
 tasks {
-  runServer {
-    // Configure the Minecraft version for our task.
-    // This is the only required configuration besides applying the plugin.
-    // Your plugin's jar (or shadowJar if present) will be used automatically.
-    minecraftVersion("1.21.8")
-  }
+    runServer {
+        downloadPlugins {
+            modrinth("valhallammo", "1.8")
+        }
+        minecraftVersion("1.21.8")
+    }
 }
 
 val targetJavaVersion = 21
+
 kotlin {
     jvmToolchain(targetJavaVersion)
 }
 
 tasks.build {
     dependsOn("shadowJar")
+}
+
+tasks.withType<Jar> {
+    includeEmptyDirs = false
 }
 
 tasks.processResources {
