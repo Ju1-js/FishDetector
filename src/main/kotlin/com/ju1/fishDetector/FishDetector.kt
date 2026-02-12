@@ -113,6 +113,7 @@ class FishDetector : JavaPlugin(), Listener {
         val newState = explicitState ?: !isEnabled
         if (isEnabled != newState) {
             isEnabled = newState
+            reloadConfig()
             config.set("enabled", isEnabled)
             saveConfig()
 
