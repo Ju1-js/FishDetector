@@ -74,6 +74,7 @@ class FishingManager(private val plugin: FishDetector) : Listener {
         val now = System.currentTimeMillis()
         val config = plugin.configManager
         val iterator = sessions.iterator()
+        val toPunish = mutableListOf<Player>()
 
         while (iterator.hasNext()) {
             val (uuid, session) = iterator.next()
@@ -111,11 +112,14 @@ class FishingManager(private val plugin: FishDetector) : Listener {
             val timeInactive = now - session.lastActiveTime
 
             if (timeInactive > config.botAfkTimeMillis) {
-                punishPlayer(player)
+                toPunish.add(player)
                 iterator.remove()
             } else if (timeInactive > config.warningTimeMillis && warnedPlayers.add(uuid)) {
                 sendWarning(player)
             }
+        }
+        if (toPunish.isNotEmpty()) {
+            toPunish.forEach { punishPlayer(it) }
         }
     }
 
