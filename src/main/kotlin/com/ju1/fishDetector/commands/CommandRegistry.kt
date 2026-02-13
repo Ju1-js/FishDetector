@@ -2,7 +2,6 @@ package com.ju1.fishDetector.commands
 
 import com.ju1.fishDetector.FishDetector
 import com.ju1.fishDetector.utils.MessageUtils
-import com.ju1.fishDetector.utils.MessageUtils.sendRichMessage
 import com.mojang.brigadier.arguments.BoolArgumentType
 import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.arguments.StringArgumentType
@@ -25,7 +24,7 @@ class CommandRegistry(private val plugin: FishDetector) {
         val manager = plugin.lifecycleManager
         manager.registerEventHandler(LifecycleEvents.COMMANDS) { event ->
             val root = Commands.literal("fishdetector").requires { it.sender.hasPermission("fishdetector.admin") }
-                .then(toggleNode()).then(listNode()).then(checkNode()).then(reloadNode()).then(resetNode()).build()
+                .then(toggleNode()).then(reloadNode()).then(listNode()).then(checkNode()).then(resetNode()).build()
 
             event.registrar().register(root, "Main command for FishDetector", listOf("fd"))
         }
@@ -74,12 +73,12 @@ class CommandRegistry(private val plugin: FishDetector) {
     private fun listNode() =
         Commands.literal("list").then(
             Commands.argument("type", StringArgumentType.word()).suggests { _, builder ->
-                listOf("punished", "fishing", "test").forEach { builder.suggest(it) }
-                builder.buildFuture()
-            }.executes { ctx -> executeList(ctx, 1) }.then(
-                Commands.argument("page", IntegerArgumentType.integer(1)).executes { ctx ->
-                    executeList(ctx, IntegerArgumentType.getInteger(ctx, "page"))
-                })
+            listOf("punished", "fishing").forEach { builder.suggest(it) } // "test" in listOf
+            builder.buildFuture()
+        }.executes { ctx -> executeList(ctx, 1) }.then(
+            Commands.argument("page", IntegerArgumentType.integer(1)).executes { ctx ->
+                executeList(ctx, IntegerArgumentType.getInteger(ctx, "page"))
+            })
         )
 
     private fun toggle(ctx: CommandContext<CommandSourceStack>, state: Boolean?): Int {
@@ -119,7 +118,7 @@ class CommandRegistry(private val plugin: FishDetector) {
 
             "fishing" -> plugin.fishingManager.getActiveFishers().map { (p, info) -> p.name to info }
 
-            "test" -> (1..55).map { "TestPlayer_$it" to "Value: ${56 - it}" }
+            // "test" -> (1..55).map { "TestPlayer_$it" to "Value: ${56 - it}" }
 
             else -> {
                 ctx.source.sender.sendRichMessage("<red>Invalid list type.")
