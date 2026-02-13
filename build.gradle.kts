@@ -77,7 +77,7 @@ tasks.register<proguard.gradle.ProGuardTask>("optimize") {
 
     val shadowJarFile = tasks.shadowJar.get().archiveFile.get().asFile
     injars(shadowJarFile)
-    outjars(shadowJarFile.parentFile.resolve("${project.name}.jar"))
+    outjars(shadowJarFile.parentFile.resolve("${project.name}-${project.version}.jar"))
 
     libraryjars(configurations.compileClasspath.get() - configurations.runtimeClasspath.get())
 
