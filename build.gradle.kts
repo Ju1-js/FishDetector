@@ -41,7 +41,8 @@ kotlin {
 }
 
 tasks.shadowJar {
-//    minimize()
+    archiveClassifier.set("all")
+    // minimize()
 
     exclude("META-INF/*.SF")
     exclude("META-INF/*.DSA")
@@ -58,6 +59,10 @@ tasks.withType<Jar> {
     includeEmptyDirs = false
 }
 
+tasks.named<Jar>("jar") {
+    archiveClassifier.set("std")
+}
+
 tasks.processResources {
     val props = mapOf("version" to version)
     inputs.properties(props)
@@ -72,7 +77,7 @@ tasks.register<proguard.gradle.ProGuardTask>("optimize") {
 
     val shadowJarFile = tasks.shadowJar.get().archiveFile.get().asFile
     injars(shadowJarFile)
-    outjars(shadowJarFile.parentFile.resolve("${shadowJarFile.nameWithoutExtension}-obf.jar"))
+    outjars(shadowJarFile.parentFile.resolve("${project.name}.jar"))
 
     libraryjars(configurations.compileClasspath.get() - configurations.runtimeClasspath.get())
 
