@@ -1,6 +1,7 @@
 enabled: true
 
-afk-time-seconds: 600
+afk-time-seconds: 45
+bot-afk-time-seconds: 600
 warning-time-seconds: 570
 cleanup-timeout-seconds: 1200
 rotation-threshold: 0.01
