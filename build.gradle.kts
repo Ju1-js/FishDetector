@@ -87,7 +87,6 @@ tasks.register<proguard.gradle.ProGuardTask>("optimize") {
     """.trimIndent())
 
     keepattributes("RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable")
-    repackageclasses("a")
 
     dontwarn("org.bukkit.**")
     dontwarn("io.papermc.**")

@@ -3,7 +3,7 @@ package com.ju1.fishDetector
 import com.ju1.fishDetector.commands.CommandRegistry
 import com.ju1.fishDetector.managers.ConfigManager
 import com.ju1.fishDetector.managers.DataManager
-import com.ju1.fishDetector.managers.DebugUtils
+import com.ju1.fishDetector.utils.DebugUtils
 import com.ju1.fishDetector.managers.FishingManager
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.scheduler.BukkitTask

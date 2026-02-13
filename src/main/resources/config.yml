@@ -9,8 +9,9 @@ check-interval-ticks: 100
 page-size: 10
 
 actions:
-  cancel-fishing: true
-  kick-player: false
+  cancel-fishing: false
+  kick-player: true
   warning-message: "<red><bold>Are you afk? <yellow>Move your mouse!"
+  warning-subtitle: "<yellow>You will be kicked shortly."
   broadcast-alert: "<yellow>%player% stopped fishing due to inactivity."
   kick-message: "<red>No AFK Fishing allowed!"

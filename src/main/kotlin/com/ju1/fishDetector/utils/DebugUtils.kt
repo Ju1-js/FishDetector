@@ -1,4 +1,4 @@
-package com.ju1.fishDetector.managers
+package com.ju1.fishDetector.utils
 
 import org.bukkit.event.Listener
 import org.bukkit.plugin.java.JavaPlugin

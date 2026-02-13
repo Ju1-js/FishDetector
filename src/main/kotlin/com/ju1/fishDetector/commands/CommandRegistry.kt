@@ -1,6 +1,8 @@
 package com.ju1.fishDetector.commands
 
 import com.ju1.fishDetector.FishDetector
+import com.ju1.fishDetector.utils.MessageUtils
+import com.ju1.fishDetector.utils.MessageUtils.sendRichMessage
 import com.mojang.brigadier.arguments.BoolArgumentType
 import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.arguments.StringArgumentType
@@ -32,7 +34,7 @@ class CommandRegistry(private val plugin: FishDetector) {
     private fun reloadNode() = Commands.literal("reload").executes { ctx ->
         plugin.configManager.load()
         plugin.updateTask()
-        ctx.source.sender.sendMessage(Component.text("Config reloaded and task updated.", NamedTextColor.GREEN))
+        ctx.source.sender.sendRichMessage("<green>Config reloaded and task updated.")
         1
     }
 
@@ -48,11 +50,9 @@ class CommandRegistry(private val plugin: FishDetector) {
         }.executes { ctx ->
             val target = resolveTarget(ctx) ?: return@executes 1
             val count = plugin.fishingManager.getPunishmentCount(target)
-            val name = target.name ?: "Unknown"
 
-            ctx.source.sender.sendMessage(
-                Component.text("$name has been punished $count times.", NamedTextColor.YELLOW)
-            )
+            val resolver = MessageUtils.getPlayerResolver(target)
+            ctx.source.sender.sendRichMessage("<yellow><player> has been punished $count times.", resolver)
             1
         })
 
@@ -63,10 +63,10 @@ class CommandRegistry(private val plugin: FishDetector) {
         }.executes { ctx ->
             val target = resolveTarget(ctx) ?: return@executes 1
             plugin.fishingManager.resetPunishmentCount(target)
-            val name = target.name ?: "Unknown"
 
-            ctx.source.sender.sendMessage(
-                Component.text("$name has had their punishment count reset.", NamedTextColor.YELLOW)
+            val resolver = MessageUtils.getPlayerResolver(target)
+            ctx.source.sender.sendRichMessage(
+                "<yellow><player> has had their punishment count reset.", resolver
             )
             1
         })
@@ -74,12 +74,12 @@ class CommandRegistry(private val plugin: FishDetector) {
     private fun listNode() =
         Commands.literal("list").then(
             Commands.argument("type", StringArgumentType.word()).suggests { _, builder ->
-            listOf("punished", "fishing", "test").forEach { builder.suggest(it) }
-            builder.buildFuture()
-        }.executes { ctx -> executeList(ctx, 1) }
-            .then(Commands.argument("page", IntegerArgumentType.integer(1)).executes { ctx ->
-                executeList(ctx, IntegerArgumentType.getInteger(ctx, "page"))
-            })
+                listOf("punished", "fishing", "test").forEach { builder.suggest(it) }
+                builder.buildFuture()
+            }.executes { ctx -> executeList(ctx, 1) }.then(
+                Commands.argument("page", IntegerArgumentType.integer(1)).executes { ctx ->
+                    executeList(ctx, IntegerArgumentType.getInteger(ctx, "page"))
+                })
         )
 
     private fun toggle(ctx: CommandContext<CommandSourceStack>, state: Boolean?): Int {
@@ -90,19 +90,11 @@ class CommandRegistry(private val plugin: FishDetector) {
             plugin.configManager.toggleState()
         }
 
-        val status = if (plugin.configManager.isEnabled) "ON" else "OFF"
-        val color = if (plugin.configManager.isEnabled) NamedTextColor.GREEN else NamedTextColor.RED
-
-        ctx.source.sender.sendMessage(
-            Component.text("FishDetector: ", NamedTextColor.GOLD).append(Component.text(status, color))
-        )
+        val status = if (plugin.configManager.isEnabled) "<green>ON" else "<red>OFF"
+        ctx.source.sender.sendRichMessage("<gold>FishDetector: $status")
         return 1
     }
 
-    /**
-     * Helper to resolve an Online or Offline player from the "target" argument.
-     * Sends an error message automatically if not found.
-     */
     private fun resolveTarget(ctx: CommandContext<CommandSourceStack>): OfflinePlayer? {
         val targetName = StringArgumentType.getString(ctx, "target")
         val target = Bukkit.getOfflinePlayer(targetName)
@@ -111,9 +103,7 @@ class CommandRegistry(private val plugin: FishDetector) {
             return target
         }
 
-        ctx.source.sender.sendMessage(
-            Component.text("Player '$targetName' not found.", NamedTextColor.RED)
-        )
+        ctx.source.sender.sendRichMessage("<red>Player '$targetName' not found.")
         return null
     }
 
@@ -122,24 +112,24 @@ class CommandRegistry(private val plugin: FishDetector) {
 
         // Generate the list based on type
         val resultList: List<Pair<String, String>> = when (type) {
-            "punished" -> Bukkit.getOnlinePlayers().map { it to plugin.fishingManager.getPunishmentCount(it) }
-                .filter { it.second > 0 }.sortedByDescending { it.second }.map { it.first.name to "${it.second} times" }
+            "punished" -> {
+                plugin.dataManager.getAllPunishedPlayers().toList().sortedByDescending { it.second }
+                    .map { it.first to "${it.second} times" }
+            }
 
-            "fishing" -> plugin.fishingManager.getActiveFishers()
-                // Assuming getActiveFishers returns Map<Player, Something>
-                .map { (p, info) -> p.name to info }
+            "fishing" -> plugin.fishingManager.getActiveFishers().map { (p, info) -> p.name to info }
 
             "test" -> (1..55).map { "TestPlayer_$it" to "Value: ${56 - it}" }
 
             else -> {
-                ctx.source.sender.sendMessage(Component.text("Invalid list type.", NamedTextColor.RED))
+                ctx.source.sender.sendRichMessage("<red>Invalid list type.")
                 return 0
             }
         }
 
         val prType = type.replaceFirstChar { it.uppercase() }
         if (resultList.isEmpty()) {
-            ctx.source.sender.sendMessage(Component.text("No results found for '$prType'.", NamedTextColor.YELLOW))
+            ctx.source.sender.sendRichMessage("<yellow>No results found for '$prType'.")
             return 1
         }
 
@@ -151,7 +141,7 @@ class CommandRegistry(private val plugin: FishDetector) {
         val startIndex = (actualPage - 1) * pageSize
         val endIndex = min(startIndex + pageSize, resultList.size)
 
-        // Header Construction
+        // Header
         val prevButton = if (actualPage > 1) {
             Component.text("«", NamedTextColor.GREEN).hoverEvent(HoverEvent.showText(Component.text("Previous Page")))
                 .clickEvent(ClickEvent.runCommand("/fd list $prType ${actualPage - 1}"))
@@ -178,11 +168,11 @@ class CommandRegistry(private val plugin: FishDetector) {
             val nameComponent = Component.text(name, NamedTextColor.WHITE)
                 .hoverEvent(HoverEvent.showText(Component.text("Click to teleport to $name", NamedTextColor.AQUA)))
                 .clickEvent(ClickEvent.runCommand("/tp $name"))
+
             ctx.source.sender.sendMessage(
                 Component.text("${i + 1}. ", NamedTextColor.GRAY).append(nameComponent)
                     .append(Component.text(" - $info", NamedTextColor.YELLOW))
             )
-
         }
         return 1
     }

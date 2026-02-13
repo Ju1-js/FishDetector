@@ -22,6 +22,7 @@ class ConfigManager(private val plugin: FishDetector) {
 
     // Messages (Strings)
     var warningMessage: String = ""
+    var warningSubtitle: String = ""
     var broadcastAlert: String = ""
     var kickMessage: String = ""
 
@@ -35,6 +36,7 @@ class ConfigManager(private val plugin: FishDetector) {
     }
 
     fun reload(c: FileConfiguration) {
+        // Convert seconds to millis for internal logic
         afkTimeMillis = c.getLong("afk-time-seconds", 30) * 1000L
         botAfkTimeMillis = c.getLong("bot-afk-time-seconds", 600) * 1000L
         warningTimeMillis = c.getLong("warning-time-seconds", 570) * 1000L
@@ -45,12 +47,12 @@ class ConfigManager(private val plugin: FishDetector) {
 
         cancelFishing = c.getBoolean("actions.cancel-fishing", true)
         kickPlayer = c.getBoolean("actions.kick-player", false)
-
         warningMessage =
-            c.getString("actions.warning-message", "<red><bold>Are you afk? <yellow>Move your mouse!")!!
+            c.getString("actions.warning-message", "<red><bold>Are you afk? <yellow>Move your mouse!") ?: ""
+        warningSubtitle = c.getString("actions.warning-subtitle", "<yellow>You will be kicked shortly.") ?: ""
         broadcastAlert =
-            c.getString("actions.broadcast-alert", "<yellow>%player% stopped fishing due to inactivity.")!!
-        kickMessage = c.getString("actions.kick-message", "<red>No AFK Fishing allowed!")!!
+            c.getString("actions.broadcast-alert", "<yellow><player> stopped fishing due to inactivity.") ?: ""
+        kickMessage = c.getString("actions.kick-message", "<red>No AFK Fishing allowed!") ?: ""
     }
 
     fun toggleState(): Boolean {
