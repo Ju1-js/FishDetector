@@ -4,7 +4,7 @@ afk-time-seconds: 45
 bot-afk-time-seconds: 600
 warning-time-seconds: 570
 cleanup-timeout-seconds: 1200
-rotation-threshold: 0.01
+rotation-threshold: 0.1
 check-interval-ticks: 100
 page-size: 10
 
@@ -13,5 +13,10 @@ actions:
   kick-player: true
   warning-message: "<red><bold>Are you afk? <yellow>Move your mouse!"
   warning-subtitle: "<yellow>You will be kicked shortly."
-  broadcast-alert: "<yellow>%player% stopped fishing due to inactivity."
+  broadcast-alert: "<yellow><player> stopped fishing due to inactivity."
   kick-message: "<red>No AFK Fishing allowed!"
+  execute-commands:
+    # - "tellraw @a 'test w'"
+
+disabled-worlds:
+  - "world_nether"

@@ -2,6 +2,7 @@ package com.ju1.fishDetector.commands
 
 import com.ju1.fishDetector.FishDetector
 import com.ju1.fishDetector.utils.MessageUtils
+import com.ju1.fishDetector.utils.MessageUtils.sendRichMessage
 import com.mojang.brigadier.arguments.BoolArgumentType
 import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.arguments.StringArgumentType
@@ -15,8 +16,7 @@ import net.kyori.adventure.text.event.HoverEvent
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.OfflinePlayer
-import kotlin.math.ceil
-import kotlin.math.min
+import org.bukkit.entity.Player
 
 class CommandRegistry(private val plugin: FishDetector) {
 
@@ -24,7 +24,7 @@ class CommandRegistry(private val plugin: FishDetector) {
         val manager = plugin.lifecycleManager
         manager.registerEventHandler(LifecycleEvents.COMMANDS) { event ->
             val root = Commands.literal("fishdetector").requires { it.sender.hasPermission("fishdetector.admin") }
-                .then(toggleNode()).then(reloadNode()).then(listNode()).then(checkNode()).then(resetNode()).build()
+                .then(toggleNode()).then(reloadNode()).then(listNode()).then(checkNode()).then(resetNode()).then(tpNode()).build()
 
             event.registrar().register(root, "Main command for FishDetector", listOf("fd"))
         }
@@ -70,10 +70,32 @@ class CommandRegistry(private val plugin: FishDetector) {
             1
         })
 
+    private fun tpNode() =
+        Commands.literal("tp").then(Commands.argument("target", StringArgumentType.word()).suggests { _, builder ->
+            Bukkit.getOnlinePlayers().forEach { builder.suggest(it.name) }
+            builder.buildFuture()
+        }.executes { ctx ->
+            val sender = ctx.source.sender as? Player ?: run {
+                ctx.source.sender.sendRichMessage("<red>Only players can use this command.")
+                return@executes 1
+            }
+
+            val targetName = StringArgumentType.getString(ctx, "target")
+            val target = Bukkit.getPlayerExact(targetName)
+
+            if (target != null && target.isOnline) {
+                sender.teleport(target.location)
+                sender.sendRichMessage("<green>Teleported to <white>${target.name}</white>.")
+            } else {
+                sender.sendRichMessage("<red>Player '$targetName' is not currently online to teleport to.")
+            }
+            1
+        })
+
     private fun listNode() =
         Commands.literal("list").then(
             Commands.argument("type", StringArgumentType.word()).suggests { _, builder ->
-            listOf("punished", "fishing").forEach { builder.suggest(it) } // "test" in listOf
+            listOf("punished", "fishing").forEach { builder.suggest(it) }
             builder.buildFuture()
         }.executes { ctx -> executeList(ctx, 1) }.then(
             Commands.argument("page", IntegerArgumentType.integer(1)).executes { ctx ->
@@ -96,7 +118,12 @@ class CommandRegistry(private val plugin: FishDetector) {
 
     private fun resolveTarget(ctx: CommandContext<CommandSourceStack>): OfflinePlayer? {
         val targetName = StringArgumentType.getString(ctx, "target")
-        val target = Bukkit.getOfflinePlayer(targetName)
+
+        // Check memory for online player before causing disk read
+        var target: OfflinePlayer? = Bukkit.getPlayerExact(targetName)
+        if (target == null) {
+            target = Bukkit.getOfflinePlayer(targetName)
+        }
 
         if (target.hasPlayedBefore() || target.isOnline) {
             return target
@@ -109,7 +136,6 @@ class CommandRegistry(private val plugin: FishDetector) {
     private fun executeList(ctx: CommandContext<CommandSourceStack>, page: Int): Int {
         val type = StringArgumentType.getString(ctx, "type").lowercase()
 
-        // Generate the list based on type
         val resultList: List<Pair<String, String>> = when (type) {
             "punished" -> {
                 plugin.dataManager.getAllPunishedPlayers().toList().sortedByDescending { it.second }
@@ -117,9 +143,6 @@ class CommandRegistry(private val plugin: FishDetector) {
             }
 
             "fishing" -> plugin.fishingManager.getActiveFishers().map { (p, info) -> p.name to info }
-
-            // "test" -> (1..55).map { "TestPlayer_$it" to "Value: ${56 - it}" }
-
             else -> {
                 ctx.source.sender.sendRichMessage("<red>Invalid list type.")
                 return 0
@@ -134,11 +157,11 @@ class CommandRegistry(private val plugin: FishDetector) {
 
         // Pagination Logic
         val pageSize = plugin.configManager.pageSize
-        val totalPages = ceil(resultList.size / pageSize.toDouble()).toInt().coerceAtLeast(1)
+        val pages = resultList.chunked(pageSize)
+        val totalPages = pages.size
         val actualPage = page.coerceIn(1, totalPages)
 
-        val startIndex = (actualPage - 1) * pageSize
-        val endIndex = min(startIndex + pageSize, resultList.size)
+        val pageItems = pages[actualPage - 1]
 
         // Header
         val prevButton = if (actualPage > 1) {
@@ -162,14 +185,17 @@ class CommandRegistry(private val plugin: FishDetector) {
         ctx.source.sender.sendMessage(header)
 
         // List Items
-        for (i in startIndex until endIndex) {
-            val (name, info) = resultList[i]
+        val startIndex = (actualPage - 1) * pageSize
+        pageItems.forEachIndexed { index, item ->
+            val (name, info) = item
+            val listNumber = startIndex + index + 1
+
             val nameComponent = Component.text(name, NamedTextColor.WHITE)
                 .hoverEvent(HoverEvent.showText(Component.text("Click to teleport to $name", NamedTextColor.AQUA)))
-                .clickEvent(ClickEvent.runCommand("/tp $name"))
+                .clickEvent(ClickEvent.runCommand("/fd tp $name"))
 
             ctx.source.sender.sendMessage(
-                Component.text("${i + 1}. ", NamedTextColor.GRAY).append(nameComponent)
+                Component.text("$listNumber. ", NamedTextColor.GRAY).append(nameComponent)
                     .append(Component.text(" - $info", NamedTextColor.YELLOW))
             )
         }

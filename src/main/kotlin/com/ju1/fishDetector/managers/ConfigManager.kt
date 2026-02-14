@@ -16,6 +16,9 @@ class ConfigManager(private val plugin: FishDetector) {
     var checkInterval: Long = 100
     var pageSize: Int = 10
 
+    var disabledWorlds: List<String> = emptyList()
+    var executeCommands: List<String> = emptyList()
+
     // Actions
     var cancelFishing: Boolean = true
     var kickPlayer: Boolean = false
@@ -45,6 +48,9 @@ class ConfigManager(private val plugin: FishDetector) {
         checkInterval = c.getLong("check-interval-ticks", 100)
         pageSize = c.getInt("page-size", 10)
 
+        disabledWorlds = c.getStringList("disabled-worlds").map { it.lowercase() }
+        executeCommands = c.getStringList("actions.execute-commands")
+
         cancelFishing = c.getBoolean("actions.cancel-fishing", true)
         kickPlayer = c.getBoolean("actions.kick-player", false)
         warningMessage =
@@ -56,11 +62,23 @@ class ConfigManager(private val plugin: FishDetector) {
     }
 
     fun toggleState(): Boolean {
+        isEnabled = !isEnabled
+        val configFile = java.io.File(plugin.dataFolder, "config.yml")
+        if (configFile.exists()) {
+            val lines = configFile.readLines()
+            var modified = false
+            val newLines = lines.map { line ->
+                if (!modified && line.trimStart().startsWith("enabled:")) {
+                    modified = true
+                    "enabled: $isEnabled"
+                } else {
+                    line
+                }
+            }
+            configFile.writeText(newLines.joinToString("\n") + "\n")
+        }
         plugin.reloadConfig()
         reload(plugin.config)
-        isEnabled = !isEnabled
-        plugin.config.set("enabled", isEnabled)
-        plugin.saveConfig()
         return isEnabled
     }
 }

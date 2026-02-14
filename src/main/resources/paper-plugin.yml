@@ -1,8 +1,11 @@
 name: FishDetector
-version: '1.0'
+version: '1.1'
 main: com.ju1.fishDetector.FishDetector
 api-version: '1.21'
 permissions:
   fishdetector.admin:
     description: Allows reloading and toggling the plugin
     default: op
+  fishdetector.bypass:
+    description: Bypasses the AFK fish detector checks
+    default: false

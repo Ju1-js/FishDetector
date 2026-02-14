@@ -19,7 +19,7 @@ import org.bukkit.event.player.PlayerQuitEvent
 class FishingManager(private val plugin: FishDetector) : Listener {
 
     private data class FisherSession(
-        var lastActiveTime: Long, var lastReelTime: Long, var lastYaw: Float, var lastPitch: Float
+        val player: Player, var lastActiveTime: Long, var lastReelTime: Long, var lastYaw: Float, var lastPitch: Float
     )
 
     private val sessions = mutableMapOf<UUID, FisherSession>()
@@ -35,11 +35,11 @@ class FishingManager(private val plugin: FishDetector) : Listener {
     }
 
     fun resetPunishmentCount(player: OfflinePlayer) {
-        plugin.dataManager.setPunishmentCount(player.uniqueId, 0)
+        plugin.dataManager.setPunishmentCount(player.uniqueId, player.name, 0)
     }
 
     fun getActiveFishers(): Map<Player, String> {
-        return Bukkit.getOnlinePlayers().filter { sessions.containsKey(it.uniqueId) }.associateWith {
+        return sessions.values.map { it.player }.associateWith {
             "Loc: ${it.location.blockX}, ${it.location.blockY}, ${it.location.blockZ}"
         }
     }
@@ -47,7 +47,7 @@ class FishingManager(private val plugin: FishDetector) : Listener {
     private fun trackPlayer(player: Player) {
         val sess = sessions.computeIfAbsent(player.uniqueId) {
             FisherSession(
-                System.currentTimeMillis(), System.currentTimeMillis(), player.yaw, player.pitch
+                player, System.currentTimeMillis(), System.currentTimeMillis(), player.yaw, player.pitch
             )
         }
         sess.lastReelTime = System.currentTimeMillis()
@@ -56,6 +56,8 @@ class FishingManager(private val plugin: FishDetector) : Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onFish(event: PlayerFishEvent) {
         if (!plugin.configManager.isEnabled) return
+        if (event.player.hasPermission("fishdetector.bypass")) return
+        if (plugin.configManager.disabledWorlds.contains(event.player.world.name.lowercase())) return
 
         if (event.state == PlayerFishEvent.State.CAUGHT_FISH || event.state == PlayerFishEvent.State.REEL_IN) {
             trackPlayer(event.player)
@@ -78,19 +80,17 @@ class FishingManager(private val plugin: FishDetector) : Listener {
 
         while (iterator.hasNext()) {
             val (uuid, session) = iterator.next()
-            val player = Bukkit.getPlayer(uuid)
+            val player = session.player
 
-            if (player == null || !player.isOnline) {
-                iterator.remove()
-                warnedPlayers.remove(uuid)
+            if (!player.isOnline) {
+                cleanupSession(iterator, uuid)
                 continue
             }
 
             // Cleanup: Hook gone and timeout passed
             if (player.fishHook == null) {
                 if (now - session.lastActiveTime > config.cleanupTimeMillis) {
-                    iterator.remove()
-                    warnedPlayers.remove(uuid)
+                    cleanupSession(iterator, uuid)
                 }
                 continue
             }
@@ -103,8 +103,7 @@ class FishingManager(private val plugin: FishDetector) : Listener {
 
             // Filter hook-sitters
             if (now - session.lastReelTime > config.afkTimeMillis) {
-                iterator.remove()
-                warnedPlayers.remove(uuid)
+                cleanupSession(iterator, uuid)
                 continue
             }
 
@@ -121,6 +120,11 @@ class FishingManager(private val plugin: FishDetector) : Listener {
         if (toPunish.isNotEmpty()) {
             toPunish.forEach { punishPlayer(it) }
         }
+    }
+
+    private fun cleanupSession(iterator: MutableIterator<MutableMap.MutableEntry<UUID, FisherSession>>, uuid: UUID) {
+        iterator.remove()
+        warnedPlayers.remove(uuid)
     }
 
     private fun hasMoved(player: Player, session: FisherSession, sensitivity: Double): Boolean {
@@ -153,10 +157,9 @@ class FishingManager(private val plugin: FishDetector) : Listener {
 
     private fun punishPlayer(player: Player) {
         warnedPlayers.remove(player.uniqueId)
-        plugin.dataManager.incrementPunishmentCount(player.uniqueId)
+        plugin.dataManager.incrementPunishmentCount(player.uniqueId, player.name)
 
         val config = plugin.configManager
-
         val playerResolver = MessageUtils.getPlayerResolver(player)
 
         // Action: Cancel Fishing
@@ -164,6 +167,11 @@ class FishingManager(private val plugin: FishDetector) : Listener {
             player.fishHook?.remove()
             val message = MessageUtils.parse(config.broadcastAlert, playerResolver)
             Bukkit.broadcast(message)
+        }
+
+        config.executeCommands.forEach { cmdTemplate ->
+            val commandToRun = cmdTemplate.replace("<player>", player.name, ignoreCase = true)
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), commandToRun)
         }
 
         // Action: Kick

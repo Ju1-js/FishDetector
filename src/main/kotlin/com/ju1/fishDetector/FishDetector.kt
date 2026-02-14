@@ -27,6 +27,11 @@ class FishDetector : JavaPlugin() {
 
         CommandRegistry(this).register()
         updateTask()
+
+        server.scheduler.runTaskTimer(this, Runnable {
+            dataManager.save()
+        }, 6000L, 6000L)
+
         logger.info("FishDetector has been enabled.")
     }
 
@@ -34,6 +39,7 @@ class FishDetector : JavaPlugin() {
         task?.cancel()
         task = null
         fishingManager.shutdown()
+        dataManager.save()
     }
 
     fun updateTask() {
